@@ -21,9 +21,9 @@ main = do
   parseShow gqlExample parse
 
 gqlExample =
-  "type Character {\
-  \  name: String!\
-  \  appearsIn: [Episode]! \
+  "type Character {\n\
+  \  name: String!\n\
+  \  appearsIn: [Episode]!\n\
   \}"
 
 parseTest :: forall s a eff
