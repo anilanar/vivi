@@ -1,21 +1,20 @@
-module Main.AST
+module Language.GraphQL.AST
 where
 
 import Data.Foldable (class Foldable, foldr)
 import Data.Generic (class Generic)
-import Data.List as LL
 import Data.Maybe (Maybe)
-import Prelude (class Show, show, (<>))
-
-type List = LL.List
+import Language.GraphQL.Types (List)
+import Prelude (class Eq, class Show, show, (<>))
 
 newtype Name = Name String
 derive instance gName :: Generic Name
 derive newtype instance shName :: Show Name
+derive newtype instance eqName :: Eq Name
 
-newtype QueryDocument = QueryDocument (List Definition)
+newtype Document = Document (List Definition)
 --derive instance gQueryDocument :: Generic QueryDocument
-derive newtype instance shQueryDocument :: Show QueryDocument
+derive newtype instance shDocument :: Show Document
 
 data Definition
   = DefinitionOperation OperationDefinition
@@ -26,10 +25,6 @@ instance shDefinition :: Show Definition where
         show'' "Definition" "DefinitionOperation" [show x]
     show (DefinitionFragment x) =
         show'' "Definition" "DefinitionFragment" [show x]
-
-newtype SchemaDocument = SchemaDocument (List TypeDefinition)
---derive instance gSchemaDocument :: Generic SchemaDocument
-derive newtype instance shSchemaDocument :: Show SchemaDocument
 
 data OperationDefinition
   = Query Node
@@ -184,13 +179,12 @@ data TypeDefinition
   | TypeDefinitionInputObject InputObjectTypeDefinition
   | TypeDefinitionTypeExtension TypeExtensionDefinition
 --derive instance gTypeDefinition :: Generic TypeDefinition
-instance shTyeDefinition :: Show TypeDefinition where
+instance shTypeDefinition :: Show TypeDefinition where
     show (TypeDefinitionObject x) = "(TypeDefinitionObject " <> show x <> ")"
     show (TypeDefinitionInterface  x) = "(TypeDefinitionInterface " <> show x <> ")"
     show (TypeDefinitionUnion x) = "(TypeDefinitionUnion " <> show x <> ")"
     show (TypeDefinitionScalar x) = "(TypeDefinitionScalar " <> show x <> ")"
     show (TypeDefinitionEnum x) = "(TypeDefinitionEnum " <> show x <> ")"
-    show (TypeDefinitionInputObject x) = "(TypeDefinitionInputObject " <> show x <> ")"
     show (TypeDefinitionInputObject x) = "(TypeDefinitionInputObject " <> show x <> ")"
     show (TypeDefinitionTypeExtension x) = "(TypeDefinitionTypeExtension " <> show x <> ")"
 

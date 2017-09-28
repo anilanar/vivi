@@ -7,32 +7,40 @@ import Control.Lazy (fix)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Console (CONSOLE, log, logShow)
 import Control.Monad.Error.Class (throwError)
+import Control.Monad.Rec.Class (forever)
 import Data.Either (Either(..))
 import Data.Foldable (foldl)
 import Data.List (many)
 import Data.Maybe (Maybe(..))
 import Debug.Trace (spy)
-import Main.Parser (PP, arguments, brackets, directive, directives, listType, namedType, optempty, parse, type_)
+import Language.GraphQL.Parser (arguments, brackets, directive, directives, listType, namedType, optempty, parse, type_)
+import Language.GraphQL.Types (PP)
 import Partial.Unsafe (unsafePartial)
 import Test.Assert (ASSERT, assert')
+import Test.Language.GraphQL.Tokens (assertWhiteSpace)
 import Text.Parsing.Parser (Parser, runParser)
 import Text.Parsing.Parser.Combinators (between, optionMaybe)
 import Text.Parsing.Parser.String (class StringLike, char, eof, string)
 
 main :: forall e. Eff (assert :: ASSERT, console :: CONSOLE | e) Unit
 main = do
+  assertWhiteSpace
   --parseTest " \n\r #comment hehe \n #kjn\n#abc  " unit whiteSpace
   --parseTest "\n" unit whiteSpace
-  log gqlExample
-  parseShow gqlExample3 parse
+  --log gqlExample
+  --parseShow gqlExample parse
+  --parseShow gqlExample burp
   --parseShow "location:@x(name: \"Anil\")" (optempty directives)
   --nameParserTest
+
+burp :: PP Unit
+burp = fix \rec -> forever parse <|> burp
 
 gqlExample =
   "type Character {\n\
   \  foo: Foo!\n\
   \  bar: [Bar]!\n\
-  \  quu: [Quu!]\n\
+  \  quu: [[[[[[[[[[[Quu!]]]]]]]]]]]\n\
   \}"
 
 gqlExample2 =
@@ -95,7 +103,7 @@ gqlExample3 =
   \type Cat implements Pet {\n\
   \  name: String!\n\
   \  nickname: String\n\
-  \  doesKnowCommand(catCommand: CatCommand!): Boolean!\n\
+  \  doesKnowCommand(catCommand: CatCommand! = 5.4e3): Boolean!\n\
   \  meowVolume: Int\n\
   \}\n\
 \\n\

@@ -1,42 +1,26 @@
-module Main.Parser
+module Language.GraphQL.Parser
 where
 
 import Control.Alt ((<$), (<|>))
 import Control.Lazy (fix)
-import Data.Either (Either(..))
-import Data.List (foldl, fromFoldable, many, some)
-import Data.List as LL
+import Data.Either (either)
+import Data.Foldable (foldl)
 import Data.Monoid (class Monoid, mempty)
-import Main.AST as AST
-import Main.Tokens (genericParser, nameParser, tok, whiteSpace)
-import Main.Types (SParser)
+import Language.GraphQL.AST as AST
+import Language.GraphQL.Tokens (genericParser, nameParser, tok, whiteSpace)
+import Language.GraphQL.Types (PP, List, fromFoldable, many, some)
 import Partial.Unsafe (unsafePartial)
-import Prelude (bind, const, pure, ($), (*>), (<$>), (<*), (<*>))
+import Prelude (const, ($), (*>), (<$>), (<*), (<*>))
 import Text.Parsing.Parser.Combinators (option, optionMaybe, sepBy1, (<?>))
 import Text.Parsing.Parser.String (char, string)
 
-type MParser =
-	{ parseQueryDocument :: SParser AST.QueryDocument
-	, parseSchemaDocument :: SParser AST.SchemaDocument
-	}
+parse :: PP AST.Document
+parse = document
 
-type PP a = SParser a
-
-type List = LL.List
-
-parse :: PP AST.SchemaDocument
-parse = schemaDocument
-
-queryDocument :: PP AST.QueryDocument
-queryDocument = whiteSpace
-	*> (AST.QueryDocument <$> some definition)
-	<?> "query document error!"
-
-schemaDocument :: PP AST.SchemaDocument
-schemaDocument = do
-	typeDefs <- some typeDefinition
-	pure (AST.SchemaDocument typeDefs)
-	-- <?> "type document error!"
+document :: PP AST.Document
+document = whiteSpace
+	*> (AST.Document <$> some definition)
+	<?> "document error!"
 
 definition :: PP AST.Definition
 definition = AST.DefinitionOperation <$> operationDefinition
@@ -142,11 +126,8 @@ value = fix \rec -> tok $
 	<|> (AST.ValueObject <$> objectValue rec <?> "objectValue")
 	<?> "value error!"
 	where
-		number = do
-			num <- genericParser.naturalOrFloat
-			case num of
-				Left n -> pure (AST.ValueInt n)
-				Right f -> pure (AST.ValueFloat f)
+		number = either AST.ValueInt AST.ValueFloat
+			<$> genericParser.naturalOrFloat
 
 booleanValue :: PP Boolean
 booleanValue = true <$ tok (string "true")
@@ -285,7 +266,7 @@ typeExtensionDefinition = AST.TypeExtensionDefinition
 	<$  tok (string "extend")
 	<*> objectTypeDefinition
 
-optempty :: forall a. Monoid a => SParser a -> SParser a
+optempty :: forall a. Monoid a => PP a -> PP a
 optempty = option mempty
 
 parens :: forall a. PP a -> PP a
