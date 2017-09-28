@@ -4,15 +4,15 @@ where
 import Control.Alt ((<$), (<|>))
 import Control.Lazy (fix)
 import Data.Either (Either(..))
-import Data.List.Lazy (fromFoldable, many, some)
-import Data.List.Lazy as LL
-import Data.Monoid (class Monoid, mempty, (<>))
-import Debug.Trace (spy)
+import Data.List (foldl, fromFoldable, many, some)
+import Data.List as LL
+import Data.Monoid (class Monoid, mempty)
 import Main.AST as AST
 import Main.Tokens (genericParser, nameParser, tok, whiteSpace)
 import Main.Types (SParser)
-import Prelude (class Monad, Unit, bind, discard, pure, show, unit, ($), (*), (*>), (<$>), (<*), (<*>))
-import Text.Parsing.Parser.Combinators (optionMaybe, sepBy1, (<?>))
+import Partial.Unsafe (unsafePartial)
+import Prelude (bind, const, pure, ($), (*>), (<$>), (<*), (<*>))
+import Text.Parsing.Parser.Combinators (option, optionMaybe, sepBy1, (<?>))
 import Text.Parsing.Parser.String (char, string)
 
 type MParser =
@@ -26,7 +26,7 @@ type List = LL.List
 
 parse :: PP AST.SchemaDocument
 parse = schemaDocument
---    where
+
 queryDocument :: PP AST.QueryDocument
 queryDocument = whiteSpace
 	*> (AST.QueryDocument <$> some definition)
@@ -54,8 +54,8 @@ operationDefinition = AST.Query
 	<?> "operationDefinition error!"
 
 node :: PP AST.Node
-node = fix $ \_ -> AST.Node
-	<$> (nameParser <* mSpy "nice name")
+node = AST.Node
+	<$> nameParser
 	<*> optempty variableDefinitions
 	<*> optempty directives
 	<*> selectionSet
@@ -77,16 +77,16 @@ variable :: PP AST.Variable
 variable = AST.Variable <$ tok (char '$') <*> nameParser
 
 selectionSet :: PP AST.SelectionSet
-selectionSet = fix \_ -> (braces (some selection))
+selectionSet = fix \rec -> (braces (some (selection rec)))
 
-selection :: PP AST.Selection
-selection = fix \_ -> AST.SelectionField <$> field
-	<|> AST.SelectionInlineFragment <$> inlineFragment
+selection :: PP AST.SelectionSet -> PP AST.Selection
+selection selectionSet = AST.SelectionField <$> field selectionSet
+	<|> AST.SelectionInlineFragment <$> inlineFragment selectionSet
 	<|> AST.SelectionFragmentSpread <$> fragmentSpread
 	<?> "selection error!"
 
-field :: PP AST.Field
-field = fix $ \_ -> AST.Field
+field :: PP AST.SelectionSet -> PP AST.Field
+field selectionSet = AST.Field
 	<$> optionMaybe alias
 	<*> nameParser
 	<*> optempty arguments
@@ -111,8 +111,8 @@ fragmentSpread = AST.FragmentSpread
 	<*> nameParser
 	<*> optempty directives
 
-inlineFragment :: PP AST.InlineFragment
-inlineFragment = fix $ \_ -> AST.InlineFragment
+inlineFragment :: PP AST.SelectionSet -> PP AST.InlineFragment
+inlineFragment selectionSet = AST.InlineFragment
 	<$ tok (string "...")
 	<*> optionMaybe (tok (string "on") *> typeCondition)
 	<*> optempty directives
@@ -131,15 +131,15 @@ typeCondition :: PP AST.TypeCondition
 typeCondition = namedType
 
 value :: PP AST.Value
-value = fix \_ -> tok $
+value = fix \rec -> tok $
 	AST.ValueVariable <$> variable <?> "variable"
 	<|> number <?> "number"
 	<|> AST.ValueNull <$ tok (string "null")
 	<|> (AST.ValueBoolean <$> booleanValue <?> "booleanValue")
 	<|> (AST.ValueString <$> stringValue <?> "stringValue")
 	<|> (AST.ValueEnum <$> nameParser <?> "name")
-	<|> (AST.ValueList <$> listValue <?> "listValue")
-	<|> (AST.ValueObject <$> objectValue <?> "objectValue")
+	<|> (AST.ValueList <$> listValue rec <?> "listValue")
+	<|> (AST.ValueObject <$> objectValue rec <?> "objectValue")
 	<?> "value error!"
 	where
 		number = do
@@ -155,16 +155,15 @@ booleanValue = true <$ tok (string "true")
 stringValue :: PP AST.StringValue
 stringValue = AST.StringValue <$> genericParser.stringLiteral
 
-listValue :: PP AST.ListValue
-listValue = fix $ \_ -> AST.ListValue
-	<$> brackets (many value)
+listValue :: PP AST.Value -> PP AST.ListValue
+listValue value = AST.ListValue <$> brackets (many value)
 
-objectValue :: PP AST.ObjectValue
-objectValue = fix $ \_ -> AST.ObjectValue
-	<$> braces (many (objectField <?> "objectField"))
+objectValue :: PP AST.Value -> PP AST.ObjectValue
+objectValue value = AST.ObjectValue
+	<$> braces (many (objectField value <?> "objectField"))
 
-objectField :: PP AST.ObjectField
-objectField = fix $ \_ -> AST.ObjectField
+objectField :: PP AST.Value -> PP AST.ObjectField
+objectField value = AST.ObjectField
 	<$> nameParser
 	<* tok (char ':')
 	<*> value
@@ -177,64 +176,43 @@ directive = AST.Directive
 	<$ tok (char '@')
 	<*> nameParser
 	<*> optempty arguments
+	<?> "directive"
 
 type_ :: PP AST.Type
-type_ = fix $ \_ -> AST.TypeNamed <$> (mSpy "typenamed" *> namedType)
-	<|> AST.TypeNonNull <$> (mSpy "typenonnull" *> nonNullType)
-	<|> AST.TypeList <$> (mSpy "typelist" *> listType)
+type_ = fix $ \rec -> foldl reduce'
+	<$> prefix rec
+	<*> optionMaybe postfix
 	<?> "type_ error!"
+	where
+		prefix rec = AST.TypeList <$> listType rec <|> AST.TypeNamed <$> namedType
+		postfix = const true <$> tok (char '!')
+		reduce' t _ = unsafePartial $ AST.TypeNonNull case t of
+			AST.TypeList r ->  AST.NonNullTypeList r
+			AST.TypeNamed r -> AST.NonNullTypeNamed r
 
 namedType :: PP AST.NamedType
 namedType = AST.NamedType <$> nameParser
 
-listType :: PP AST.ListType
-listType = fix $ \_ -> AST.ListType
-	<$> brackets (mSpy "ff" *> type_)
-	-- _ <- char '['
-	-- mSpy "dd"
-	-- result <- type_ p
-	-- mSpy "ff"
-	-- _ <- char ']'
-	-- pure result
-
-nonNullType :: PP AST.NonNullType
-nonNullType = fix $ \_ ->
-	AST.NonNullTypeNamed <$> xyz --namedType <* tok (char '!')
-	<|> AST.NonNullTypeList <$> listType <* tok (char '!')
-	<?> "nonNullType error!"
-	where
-		xyz = do
-			mSpy "before namedType"
-			name <- namedType
-			_ <- tok (char '!')
-			mSpy (show name)
-			pure name
-
-
+listType :: PP AST.Type -> PP AST.ListType
+listType type_ = AST.ListType <$> brackets type_
 
 typeDefinition :: PP AST.TypeDefinition
 typeDefinition =
-	(AST.TypeDefinitionObject <$> objectTypeDefinition) -- *> p
-	<|> (AST.TypeDefinitionInterface <$> interfaceTypeDefinition) -- *> p
-	<|> (AST.TypeDefinitionUnion <$> unionTypeDefinition) -- *> p
-	<|> (AST.TypeDefinitionScalar <$> scalarTypeDefinition) -- *> p
-	<|> (AST.TypeDefinitionEnum <$> enumTypeDefinition) -- *> p
-	<|> (AST.TypeDefinitionInputObject <$> inputObjectTypeDefinition) -- *> p
-	<|> (AST.TypeDefinitionTypeExtension <$> typeExtensionDefinition) -- *> p
+	(AST.TypeDefinitionObject <$> objectTypeDefinition)
+	<|> (AST.TypeDefinitionInterface <$> interfaceTypeDefinition)
+	<|> (AST.TypeDefinitionUnion <$> unionTypeDefinition)
+	<|> (AST.TypeDefinitionScalar <$> scalarTypeDefinition)
+	<|> (AST.TypeDefinitionEnum <$> enumTypeDefinition)
+	<|> (AST.TypeDefinitionInputObject <$> inputObjectTypeDefinition)
+	<|> (AST.TypeDefinitionTypeExtension <$> typeExtensionDefinition)
 	<?> "typeDefinition error!"
 
 objectTypeDefinition :: PP AST.ObjectTypeDefinition
-objectTypeDefinition = do
-	mSpy "before type"
-	_ <- tok (string "type")
-	mSpy "before name parser"
-	name <- nameParser
-	mSpy "after name parser"
-	interfaces' <- optempty interfaces
-	mSpy "after interfaces"
-	fieldDefs <- fieldDefinitions
-	mSpy "after field defs"
-	pure (AST.ObjectTypeDefinition name interfaces' fieldDefs)
+objectTypeDefinition = AST.ObjectTypeDefinition
+	<$ tok (string "type")
+	<*> nameParser
+	<*> optempty interfaces
+	<*> fieldDefinitions
 
 interfaces :: PP AST.Interfaces
 interfaces = tok (string "implements") *> some namedType
@@ -243,23 +221,12 @@ fieldDefinitions :: PP (List AST.FieldDefinition)
 fieldDefinitions = braces $ some fieldDefinition
 
 fieldDefinition :: PP AST.FieldDefinition
-fieldDefinition = do
-	name <- nameParser
-	args <- optempty argumentsDefinition
-	_ <- tok (char ':')
-	type' <- type_
-	pure (AST.FieldDefinition name args type')
-	-- <$> nameParser
-	-- <*> optempty argumentsDefinition
-	-- <* tok (char ':')
-	-- <* mSpy "before type"
-	-- <*> type_
-	-- <* mSpy "after type"
-
-mSpy :: String -> SParser Unit
-mSpy s = do
-	let _ = spy s
-	pure unit
+fieldDefinition = AST.FieldDefinition
+	<$> nameParser
+	<*> optempty argumentsDefinition
+	<* tok (char ':')
+	<*> type_
+	<* optempty directives
 
 argumentsDefinition :: PP AST.ArgumentsDefinition
 argumentsDefinition = parens $ some inputValueDefinition
@@ -307,12 +274,11 @@ inputValueDefinitions :: PP (List AST.InputValueDefinition)
 inputValueDefinitions = braces (some inputValueDefinition)
 
 inputValueDefinition :: PP AST.InputValueDefinition
-inputValueDefinition = do
-	name <- nameParser
-	_ <- tok (char ':')
-	type' <- type_
-	defVal <- optionMaybe defaultValue
-	pure (AST.InputValueDefinition name type' defVal)
+inputValueDefinition = AST.InputValueDefinition
+	<$> nameParser
+	<* tok (char ':')
+	<*> type_
+	<*> optionMaybe defaultValue
 
 typeExtensionDefinition :: PP AST.TypeExtensionDefinition
 typeExtensionDefinition = AST.TypeExtensionDefinition
@@ -320,9 +286,16 @@ typeExtensionDefinition = AST.TypeExtensionDefinition
 	<*> objectTypeDefinition
 
 optempty :: forall a. Monoid a => SParser a -> SParser a
-optempty = pure mempty
+optempty = option mempty
 
+parens :: forall a. PP a -> PP a
 parens = between (char '(') (char ')')
+
+braces :: forall a. PP a -> PP a
 braces = between (char '{') (char '}')
+
+brackets :: forall a. PP a -> PP a
 brackets = between (char '[') (char ']')
+
+between :: forall a b c. PP a -> PP b -> PP c -> PP c
 between open close p = tok open *> p <* tok close

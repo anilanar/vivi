@@ -1,16 +1,11 @@
 module Main.AST
 where
 
-import Control.Alt ((<|>))
-import Control.Plus (empty)
+import Data.Foldable (class Foldable, foldr)
 import Data.Generic (class Generic)
-import Data.Generic.Rep.Show (genericShow, genericShow')
-import Data.List.Lazy as LL
+import Data.List as LL
 import Data.Maybe (Maybe)
-import Debug.Trace (spy)
-import Prelude (class Monad, class Show, show, ($), (<$>), (<>))
-import Text.Parsing.Parser.String (char)
-import Text.Parsing.Parser.Token (GenLanguageDef(LanguageDef), GenTokenParser, alphaNum, letter, makeTokenParser)
+import Prelude (class Show, show, (<>))
 
 type List = LL.List
 
@@ -27,8 +22,10 @@ data Definition
   | DefinitionFragment FragmentDefinition
 --derive instance gDefinition :: Generic Definition
 instance shDefinition :: Show Definition where
-    show (DefinitionOperation x) = show x
-    show (DefinitionFragment x) = show x
+    show (DefinitionOperation x) =
+        show'' "Definition" "DefinitionOperation" [show x]
+    show (DefinitionFragment x) =
+        show'' "Definition" "DefinitionFragment" [show x]
 
 newtype SchemaDocument = SchemaDocument (List TypeDefinition)
 --derive instance gSchemaDocument :: Generic SchemaDocument
@@ -74,9 +71,8 @@ instance shSelection :: Show Selection where
 data Field = Field (Maybe Alias) Name (List Argument) (List Directive) SelectionSet
 --derive instance gField :: Generic Field
 instance shField :: Show Field where
-    show (Field x y z j k) = "(VariableDefinition "
-        <> show x <> " " <> show y <> " " <> show z <> " " <> show j <> " "
-        <> show k <> ")"
+    show (Field x y z j k) = "(VariableDefinition " <>
+        (foldr (<>) ")" ([show x, show y, show z, show j, show k])) <> ")"
 
 type Alias = Name
 
@@ -201,14 +197,15 @@ instance shTyeDefinition :: Show TypeDefinition where
 data ObjectTypeDefinition = ObjectTypeDefinition Name Interfaces (List FieldDefinition)
 --derive instance gObjectTypeDefinition :: Generic ObjectTypeDefinition
 instance shObjectTypeDefinition :: Show ObjectTypeDefinition where
-    show _ = ""
+    show (ObjectTypeDefinition x y z) =
+        show' "ObjectTypeDefinition" [show x, show y, show z]
 
 type Interfaces = List NamedType
 
 data FieldDefinition = FieldDefinition Name ArgumentsDefinition Type
 --derive instance gFieldDefinition :: Generic FieldDefinition
 instance shFieldDefinition :: Show FieldDefinition where
-    show _ = ""
+    show (FieldDefinition x y z) = show' "FieldDefinition" [show x, show y, show z]
 
 type ArgumentsDefinition = List InputValueDefinition
 
@@ -248,3 +245,17 @@ instance shInputObjectTypeDefinition :: Show InputObjectTypeDefinition where
 newtype TypeExtensionDefinition = TypeExtensionDefinition ObjectTypeDefinition
 --derive instance gTypeExtensionDefinition :: Generic TypeExtensionDefinition
 derive newtype instance shTypeExtensionDefinition :: Show TypeExtensionDefinition
+
+show' :: forall f. Foldable f => String -> f String -> String
+show' name args = prefix <> foldr addSpace postfix args
+    where
+        addSpace a b = a <> " " <> b
+        prefix = "(" <> name <> " "
+        postfix = "))"
+
+show'' :: forall f. Foldable f => String -> String -> f String -> String
+show'' name cstr args = prefix <> foldr addSpace postfix args
+    where
+        addSpace a b = a <> " " <> b
+        prefix = "(" <> name <> "(" <> cstr <> " "
+        postfix = "))"
