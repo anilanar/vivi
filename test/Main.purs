@@ -6,6 +6,7 @@ import Control.Alt ((<|>))
 import Control.Lazy (fix)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Console (CONSOLE, log, logShow)
+import Control.Monad.Eff.Exception (EXCEPTION)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.Rec.Class (forever)
 import Data.Either (Either(..))
@@ -15,6 +16,8 @@ import Data.Maybe (Maybe(..))
 import Debug.Trace (spy)
 import Language.GraphQL.Parser (arguments, brackets, directive, directives, listType, namedType, optempty, parse, type_)
 import Language.GraphQL.Types (PP)
+import Language.Protobuf.Parser.Test (parser)
+import Node.FS (FS)
 import Partial.Unsafe (unsafePartial)
 import Test.Assert (ASSERT, assert')
 import Test.Language.GraphQL.Tokens (assertWhiteSpace)
@@ -22,9 +25,15 @@ import Text.Parsing.Parser (Parser, runParser)
 import Text.Parsing.Parser.Combinators (between, optionMaybe)
 import Text.Parsing.Parser.String (class StringLike, char, eof, string)
 
-main :: forall e. Eff (assert :: ASSERT, console :: CONSOLE | e) Unit
+main :: forall e. Eff
+  ( assert :: ASSERT
+  , console :: CONSOLE
+  , exception :: EXCEPTION
+  , fs :: FS | e
+  ) Unit
 main = do
-  assertWhiteSpace
+  --assertWhiteSpace
+  parser
   --parseTest " \n\r #comment hehe \n #kjn\n#abc  " unit whiteSpace
   --parseTest "\n" unit whiteSpace
   --log gqlExample
