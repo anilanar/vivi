@@ -47,7 +47,7 @@ data EnumBody
 data EnumField = EnumField Ident Int (List EnumValueOption)
 data EnumValueOption = EnumValueOption OptionName Constant
 
-data Service = Service Ident ServiceBody
+data Service = Service Ident (List ServiceBody)
 data ServiceBody
 	= ServiceBodyOption Option
 	| ServiceBodyRpc Rpc
@@ -66,13 +66,13 @@ data Reserved
 data Range = Range Int (Maybe (Either Int Max))
 data Max = Max
 
-data Rpc = Rpc Ident RpcType RpcType
+data Rpc = Rpc Ident RpcType RpcType (List Option)
 data RpcType
 	= RpcType Ident
 	| RpcTypeStream Ident
 
 data KeyType
-	= Int32 | Int64 | UInt32 | UInt64 | SInt32 | SInt64 | Fixed32
+	= Float | Double | Int32 | Int64 | UInt32 | UInt64 | SInt32 | SInt64 | Fixed32
 	| Fixed64 | SFixed32 | SFixed64 | Bool | String
 newtype Type = Type String
 newtype FieldNumber = FieldNumber Int

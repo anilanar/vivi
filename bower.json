@@ -12,12 +12,15 @@
     "purescript-maybe": "^3.0.0",
     "purescript-parsing": "^4.3.1",
     "purescript-generics": "^4.0.0",
-    "purescript-generics-rep": "^5.3.0"
+    "purescript-generics-rep": "^5.3.0",
+    "purescript-pprint": "^4.0.0"
   },
   "devDependencies": {
     "purescript-psci-support": "^3.0.0",
     "purescript-assert": "^3.0.0",
     "purescript-debug": "^3.0.0",
-    "purescript-node-fs": "^4.0.0"
+    "purescript-node-fs": "^4.0.0",
+    "purescript-spec": "^2.0.0",
+    "purescript-spec-discovery": "git://github.com/anilanar/purescript-spec-discovery#9f67aaffc5ad5d8f6b1ec14481b6932ed05c0776"
   }
 }

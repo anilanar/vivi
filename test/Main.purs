@@ -5,6 +5,7 @@ import Prelude
 import Control.Alt ((<|>))
 import Control.Lazy (fix)
 import Control.Monad.Eff (Eff)
+import Control.Monad.Eff.AVar (AVAR)
 import Control.Monad.Eff.Console (CONSOLE, log, logShow)
 import Control.Monad.Eff.Exception (EXCEPTION)
 import Control.Monad.Error.Class (throwError)
@@ -21,19 +22,22 @@ import Node.FS (FS)
 import Partial.Unsafe (unsafePartial)
 import Test.Assert (ASSERT, assert')
 import Test.Language.GraphQL.Tokens (assertWhiteSpace)
+import Test.Spec.Discovery (discover)
+import Test.Spec.Reporter (consoleReporter)
+import Test.Spec.Runner (PROCESS, run)
 import Text.Parsing.Parser (Parser, runParser)
 import Text.Parsing.Parser.Combinators (between, optionMaybe)
 import Text.Parsing.Parser.String (class StringLike, char, eof, string)
 
-main :: forall e. Eff
-  ( assert :: ASSERT
-  , console :: CONSOLE
-  , exception :: EXCEPTION
-  , fs :: FS | e
-  ) Unit
-main = do
+--main :: forall e. Eff
+--  ( assert :: ASSERT
+--  , console :: CONSOLE
+--  , exception :: EXCEPTION
+--  , fs :: FS | e
+--  ) Unit
+--main = do
   --assertWhiteSpace
-  parser
+  --parser
   --parseTest " \n\r #comment hehe \n #kjn\n#abc  " unit whiteSpace
   --parseTest "\n" unit whiteSpace
   --log gqlExample
@@ -41,6 +45,17 @@ main = do
   --parseShow gqlExample burp
   --parseShow "location:@x(name: \"Anil\")" (optempty directives)
   --nameParserTest
+
+main :: forall e.
+  Eff
+    ( fs :: FS
+    , avar :: AVAR
+    , console :: CONSOLE
+    , process :: PROCESS
+    | e
+    )
+    Unit
+main = discover "Test\\.Language\\..*Spec" >>= run [consoleReporter]
 
 burp :: PP Unit
 burp = fix \rec -> forever parse <|> burp

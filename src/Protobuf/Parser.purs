@@ -8,9 +8,9 @@ import Data.Foldable (foldl)
 import Data.Monoid (class Monoid, mempty, (<>))
 import Language.Protobuf.AST as AST
 import Language.Protobuf.Tokens (genericParser, identParser, tok)
-import Language.Protobuf.Types (PP, List, concatMap, many, nil, (:))
-import Prelude (Unit, (*>), (<*), (<*>))
-import Text.Parsing.Parser.Combinators (optionMaybe, optional, sepBy, sepBy1)
+import Language.Protobuf.Types (List(..), PP, concatMap, many, (:))
+import Prelude (Unit, bind, const, pure, (*>), (<*), (<*>))
+import Text.Parsing.Parser.Combinators (optionMaybe, sepBy, sepBy1)
 import Text.Parsing.Parser.Combinators as C
 import Text.Parsing.Parser.String (char, string)
 
@@ -43,22 +43,10 @@ package = AST.Package
 	<*> fullIdent
 	<* tok (char ';')
 
-option :: PP AST.Option
-option = AST.Option
-	<$ tok (string "option")
-	<*> optionName
-	<* tok (char '=')
-	<*> constant
-	<* tok (char ';')
-
-optionName :: PP AST.OptionName
-optionName = AST.Customized <$> parens fullIdent <*> many ident
-	<|> AST.Predefined <$> ident
-
 definition :: PP AST.Definition
 definition = AST.DefinitionMessage <$> message
 	<|> AST.DefinitionEnum <$> enum
-	-- <|> AST.DefinitionService <$> service
+	<|> AST.DefinitionService <$> service
 
 message :: PP AST.Message
 message = fix \rec -> AST.Message
@@ -84,24 +72,15 @@ normalField = repeated <|> normal
 			<*> ident
 			<* tok (char '=')
 			<*> fieldNumber
-			<*> fieldOption `sepBy` tok (char ',')
+			<*> optempty (brackets (fieldOption `sepBy` tok (char ',')))
 			<* tok (char ';')
 		normal = AST.FieldNormal
 			<$> type_
 			<*> ident
 			<* tok (char '=')
 			<*> fieldNumber
-			<*> fieldOption `sepBy` tok (char ',')
+			<*> optempty (brackets (fieldOption `sepBy` tok (char ',')))
 			<* tok (char ';')
-
-fieldNumber :: PP AST.FieldNumber
-fieldNumber = AST.FieldNumber <$> genericParser.integer
-
-fieldOption :: PP AST.FieldOption
-fieldOption = AST.FieldOption
-	<$> ident
-	<* tok (char '=')
-	<*> constant
 
 oneOf :: PP AST.OneOf
 oneOf = AST.OneOf
@@ -116,6 +95,7 @@ oneOfField = AST.OneOfField
 	<* tok (char '=')
 	<*> fieldNumber
 	<*> (brackets (many fieldOption))
+	<* tok (char ';')
 
 enum :: PP AST.Enum
 enum = AST.Enum
@@ -141,6 +121,45 @@ enumValueOption = AST.EnumValueOption
 	<* tok (char '=')
 	<*> constant
 
+service :: PP AST.Service
+service = AST.Service
+	<$ tok (string "service")
+	<*> ident
+	<*> braces (manyStatements serviceBody)
+
+serviceBody :: PP AST.ServiceBody
+serviceBody = AST.ServiceBodyOption <$> option
+	<|> AST.ServiceBodyRpc <$> rpc
+
+rpc :: PP AST.Rpc
+rpc = AST.Rpc
+	<$ tok (string "rpc")
+	<*> ident
+	<*> parens rpcType
+	<* tok (string "returns")
+	<*> parens rpcType
+	<*> optionsOrEnd
+	where
+		rpcType :: PP AST.RpcType
+		rpcType = AST.RpcTypeStream <$ (tok (string "stream")) <*> messageType
+			<|> AST.RpcType <$> messageType
+		optionsOrEnd = braces (manyStatements option)
+			<|> (const mempty) <$> tok (char ';')
+
+option :: PP AST.Option
+option = AST.Option
+	<$ tok (string "option")
+	<*> optionName
+	<* tok (char '=')
+	<*> constant
+	<* tok (char ';')
+
+optionName :: PP AST.OptionName
+optionName = AST.Customized
+	<$> parens fullIdent
+	<*> optempty (tok (char '.') *> ident `sepBy` (tok (char '.')))
+	<|> AST.Predefined <$> ident
+
 mapField :: PP AST.MapField
 mapField = AST.MapField
 	<$ tok (string "map<")
@@ -151,19 +170,26 @@ mapField = AST.MapField
 	<*> ident
 	<* tok (char '=')
 	<*> fieldNumber
-	<*> brackets (fieldOption `sepBy` tok (char ','))
+	<*> optempty (brackets (fieldOption `sepBy` tok (char ',')))
 
 reserved :: PP AST.Reserved
-reserved = reservedRanges <|> reservedNames
+reserved = (reservedRanges <|> reservedNames)
+	<* tok (char ';')
 	where
 		reservedToken = tok (string "reserved")
 		reservedRanges = AST.ReservedRanges
 			<$ reservedToken
-			<*> range `sepBy` tok (char ',')
+			<*> range `sepBy1` tok (char ',')
 			<* tok (char ';')
 		reservedNames = AST.ReservedNames
 			<$ reservedToken
-			<*> ident `sepBy` tok (char ',')
+			<*> ident `sepBy1` tok (char ',')
+
+fieldOption :: PP AST.FieldOption
+fieldOption = AST.FieldOption
+	<$> ident
+	<* tok (char '=')
+	<*> constant
 
 range :: PP AST.Range
 range = AST.Range
@@ -174,15 +200,27 @@ range = AST.Range
 		intOrMax = Left <$> genericParser.integer
 			<|> Right <$> (AST.Max <$ tok (string "max"))
 
+fieldNumber :: PP AST.FieldNumber
+fieldNumber = AST.FieldNumber <$> genericParser.integer
+
 type_ :: PP AST.Type
-type_ = AST.Type
-	<$ C.option "" (tok (string "."))
-	<*> (foldl (<>) "" <$> rest)
+type_ = AST.Type <$> messageTypeParser
+
+messageType :: PP AST.Ident
+messageType = AST.Ident <$> messageTypeParser
+
+messageTypeParser :: PP String
+messageTypeParser = do
+	dotPrefix <- C.option "" (tok (string "."))
+	body <- foldl (<>) "" <$> rest
+	pure (dotPrefix <> body)
 	where
 		rest = identParser `sepBy` tok (char '.')
 
 keyType :: PP AST.KeyType
-keyType = AST.Int32 <$ tok (string "int32")
+keyType = AST.Double <$ tok (string "double")
+	<|> AST.Float <$ tok (string "float")
+	<|> AST.Int32 <$ tok (string "int32")
 	<|> AST.Int64 <$ tok (string "int64")
 	<|> AST.UInt32 <$ tok (string "uint32")
 	<|> AST.UInt64 <$ tok (string "uint64")
@@ -212,8 +250,8 @@ manyStatements p = filterEmpty <$> many withEmpty
 filterEmpty :: forall a. List (Either a Unit) -> List a
 filterEmpty = concatMap toList
 	where toList e = case e of
-		Left x -> x:nil
-		Right _ -> nil
+		Left x -> x : Nil
+		Right _ -> Nil
 
 
 stringLiteral :: PP AST.StringLiteral
