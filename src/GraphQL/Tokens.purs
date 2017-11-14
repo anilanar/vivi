@@ -5,6 +5,7 @@ import Control.Alt (void, (<$>), (<|>))
 import Control.Plus (empty)
 import Data.Array (fromFoldable)
 import Data.Char.Unicode (isSpace)
+import Data.List (List(..), manyRec, someRec, (:))
 import Data.String (fromCharArray)
 import Language.GraphQL.AST (Name(..))
 import Language.GraphQL.Types (PP, many, some)
@@ -18,7 +19,7 @@ tok :: forall a. PP a -> PP a
 tok p = p <* whiteSpace
 
 whiteSpace :: forall s a. StringLike s => Parser s Unit
-whiteSpace = void (many (space <|> comment))
+whiteSpace = void (manyRec (space <|> comment))
 	where
 		space = void $ satisfy (\c -> isSpace c || c == ',')
 		comment = void (char '#') <* manyTill (void anyChar) eol
@@ -30,9 +31,10 @@ nameParser :: PP Name
 nameParser = Name <$> tok ident
     where
         ident = fromCharArray <<< fromFoldable
-            <$> ((<>) <$> (some identStart) <*> (many identCont))
+            <$> ((<>) <$>  (mkList <$> identStart) <*> (manyRec identCont))
         identStart = char '_' <|> letter
         identCont = char '_' <|> alphaNum
+        mkList a = a : Nil
 
 genericParser :: forall m. Monad m => GenTokenParser String m
 genericParser = makeTokenParser $ LanguageDef def

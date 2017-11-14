@@ -1,18 +1,38 @@
 module Language.Protobuf.Printer
 where
 
+import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Data.Either (Either(..))
 import Data.Foldable (class Foldable, intercalate)
+import Data.Identity (Identity)
 import Data.Maybe (Maybe(Just, Nothing))
 import Data.Newtype (unwrap)
+import Data.Traversable (class Traversable, traverse)
 import Language.Protobuf.AST as AST
-import Language.Protobuf.Types (List(..))
-import Prelude (class Functor, show, ($), (&&), (<$>), (<<<), (==))
+import Language.Protobuf.Types (List(Nil), Options, Syntax(..))
+import Prelude (bind, pure, show, ($), (&&), (<$>), (<<<), (==))
 import Text.Pretty as P
 
+type ProtoPrinterT = ReaderT Options Identity
+type DocT = ProtoPrinterT P.Doc
+
+class Print p where
+	print :: p -> DocT
+
+runProtoPrinter :: forall a
+	 . Options
+	-> ProtoPrinterT a
+	-> a
+runProtoPrinter options printer = unwrap
+	$ (runReaderT printer) options
+
+syntaxVersion :: ProtoPrinterT Syntax
+syntaxVersion = do
+	options <- ask
+	pure $ options.version
+
 instance printDocument :: Print AST.Document where
-    print (AST.Document statements) = syntax
-		<^> P.vcat (print <$> statements)
+    print (AST.Document statements) = syntax <^> (vmany statements)
 
 instance printStatement :: Print AST.Statement where
     print (AST.StatementImport import_) = print import_
@@ -56,10 +76,13 @@ instance printMessageBody :: Print AST.MessageBody where
 	print (AST.MessageBodyNormalField normalField) = print normalField
 
 instance printNormalField :: Print AST.NormalField where
-	print (AST.FieldNormal type_ name fieldNumber options) = print type_
-		<+> printAssign name fieldNumber
-		<+> printOptions options
-		<> print ";"
+	print (AST.FieldNormal type_ name fieldNumber options) = do
+		v <- syntaxVersion
+		printOptional v
+			<+> print type_
+			<+> printAssign name fieldNumber
+			<+> printOptions options
+			<> print ";"
 
 	print (AST.FieldNormalRepeated type_ name fieldNumber options) =
 		print "repeated"
@@ -67,6 +90,10 @@ instance printNormalField :: Print AST.NormalField where
 		<+> printAssign name fieldNumber
 		<+> printOptions options
 		<> print ";"
+
+printOptional :: Syntax -> DocT
+printOptional Syntax2 = print "optional"
+printOptional _ = empty
 
 instance printOneOf :: Print AST.OneOf where
 	print (AST.OneOf name statements) = printBody firstLine statements
@@ -109,7 +136,7 @@ instance printRpc :: Print AST.Rpc where
 	print rpc@(AST.Rpc _ _ _ Nil) = printRpcDef rpc <> print ";"
 	print rpc@(AST.Rpc _ _ _ statements) = printBody (printRpcDef rpc) statements
 
-printRpcDef :: AST.Rpc -> P.Doc
+printRpcDef :: AST.Rpc -> DocT
 printRpcDef (AST.Rpc name inputType outputType _) =  print "rpc"
 	<+> print name
 	<+> parens (print inputType)
@@ -155,7 +182,7 @@ instance printRange :: Print AST.Range where
 		<+> print "to"
 		<+> printMax max
 		where
-			printMax :: (Either Int AST.Max) -> P.Doc
+			printMax :: (Either Int AST.Max) -> DocT
 			printMax (Right x) = print "max"
 			printMax (Left int) = print int
 
@@ -189,23 +216,23 @@ instance printConstant :: Print AST.Constant where
 	print (AST.ConstantBool x) = print x
 
 instance printStringLiteral :: Print AST.StringLiteral where
-	print (AST.StringLiteral str) = P.text "\"" <> print str <> P.text "\""
+	print (AST.StringLiteral str) = string "\"" <> print str <> string "\""
 
 instance printInt :: Print Int where
-	print x = P.text (show x)
+	print x = pure $ P.text (show x)
 
 instance printFloat :: Print Number where
-	print x = P.text (show x)
+	print x = pure $ P.text (show x)
 
 instance printBoolean :: Print Boolean where
-	print true = P.text "true"
-	print false = P.text "false"
+	print true = pure $ P.text "true"
+	print false = pure $ P.text "false"
 
 instance printString :: Print String where
-	print x = P.text x
+	print x = pure $ P.text x
 
-syntax :: P.Doc
-syntax = P.text "syntax = \"proto3\";"
+syntax :: DocT
+syntax = string "syntax = \"proto3\";"
 
 instance printFullIdent :: Print AST.FullIdent where
 	print (AST.FullIdent indents) = hSepBy "." indents
@@ -213,83 +240,112 @@ instance printFullIdent :: Print AST.FullIdent where
 instance printIdent :: Print AST.Ident where
 	print (AST.Ident name) = print name
 
-printAssign :: forall a b. Print a => Print b => a -> b -> P.Doc
+printAssign :: forall a b. Print a => Print b => a -> b -> DocT
 printAssign x y = print x <+> print "=" <+> print y
 
-printBody :: forall a. Print a => P.Doc -> List a -> P.Doc
+printBody :: forall a. Print a => DocT -> List a -> DocT
 printBody firstLine statements = firstLine
 	<+> print "{"
 	<^> printBody' statements
 	<^> print "}"
 	where
+		printBody' :: forall b. Print b => List b -> DocT
 		printBody' Nil = vempty
-		printBody' lst = indent 2 (P.vcat (print <$> lst))
+		printBody' lst = indent 2 (vmany lst)
 
-printOptions :: forall a. Print a => List a -> P.Doc
+printOptions :: forall a. Print a => List a -> DocT
 printOptions Nil = empty
 printOptions opts = print "["
 		<> hSepBy ", " opts
 		<> print "]"
 
-hSepBy :: forall f m
-	 . Foldable f
-	=> Functor f
-	=> Print m
-	=> String
-	-> f m
-	-> P.Doc
-hSepBy separator list = unwrap $ intercalate
-	(P.Columns (P.text separator))
-	(P.Columns <<< print <$> list)
+instance printDoc :: Print P.Doc where
+	print doc = pure doc
 
-indent :: Int -> P.Doc -> P.Doc
+hSepBy :: forall f a
+	 . Foldable f
+	=> Traversable f
+	=> Print a
+	=> String
+	-> f a
+	-> DocT
+hSepBy separator list = do
+	list' <- traverse print list
+	pure $ unwrap $ intercalate (P.Columns (P.text separator)) (P.Columns <$> list')
+
+indent :: Int -> DocT -> DocT
 indent w doc = padding <> doc
 	where
-		padding = P.empty w (P.height doc)
+		padding = do
+			doc' <- doc
+			pure $ P.empty w (P.height doc')
 
-besideWithSpace :: P.Doc -> P.Doc -> P.Doc
-besideWithSpace a b | isEmpty b = a
-besideWithSpace a b | isEmpty a = b
-besideWithSpace a b = a <> P.text " " <> b
+besideWithSpace :: DocT
+	-> DocT
+	-> DocT
+besideWithSpace a b = do
+	bIsEmpty <- isEmpty b
+	aIsEmpty <- isEmpty a
+	if bIsEmpty then a else if aIsEmpty then b else a <> (string " ") <> b
+-- besideWithSpace a b | isEmpty a = b
+-- besideWithSpace a b = a <> P.text " " <> b
 
-besideWithComma :: P.Doc -> P.Doc -> P.Doc
-besideWithComma a b | isEmpty b = a
-besideWithComma a b | isEmpty a = b
-besideWithComma a b = a <> P.text ", " <> b
+besideWithComma :: DocT
+	-> DocT
+	-> DocT
+besideWithComma a b = do
+	bIsEmpty <- isEmpty b
+	aIsEmpty <- isEmpty a
+	if bIsEmpty then a else if aIsEmpty then b else (a <> (string ", ") <> b)
 
-isEmpty :: P.Doc -> Boolean
-isEmpty doc = P.width doc == 0 && P.height doc == 1
+isEmpty :: DocT -> ProtoPrinterT Boolean
+isEmpty doc = do
+	doc' <- doc
+	pure (P.width doc' == 0 && P.height doc' == 1)
 
-hempty :: P.Doc
-hempty = P.empty 0 1
+hempty :: DocT
+hempty = pure $ P.empty 0 1
 
-vempty :: P.Doc
-vempty = P.empty 0 0
+vempty :: DocT
+vempty = pure $ P.empty 0 0
 
-empty :: P.Doc
+empty :: DocT
 empty = hempty
 
-braces :: P.Doc -> P.Doc
-braces x = print "{"
-	<^> print "}"
-
-brackets :: P.Doc -> P.Doc
+brackets :: DocT -> DocT
 brackets x = between (print "[") (print "]") x
 
-parens :: P.Doc -> P.Doc
+parens :: DocT -> DocT
 parens x = between (print "(") (print ")") x
 
-between :: P.Doc -> P.Doc -> P.Doc -> P.Doc
+between :: DocT -> DocT -> DocT -> DocT
 between open close d = open <> d <> close
 
-optempty :: forall p. (List p -> P.Doc) -> List p -> P.Doc
+optempty :: forall p. (List p -> DocT) -> List p -> DocT
 optempty fn Nil = empty
 optempty fn lst = fn lst
 
-class Print p where
-	print :: p -> P.Doc
+vmany :: forall a. Print a => List a -> DocT
+vmany lst = do
+	lst' <- traverse print lst
+	pure (P.vcat lst')
+
+atop :: DocT -> DocT -> DocT
+atop a b = do
+	a' <- a
+	b' <- b
+	pure $ P.atop a' b'
+
+beside :: DocT -> DocT -> DocT
+beside a b = do
+	a' <- a
+	b' <- b
+	pure $ P.beside a' b'
+
+string :: String -> DocT
+string s = pure $ P.text s
 
 infixl 5 besideWithSpace as <+>
 infixl 5 besideWithComma as <++>
-infixl 5 P.beside as <>
-infixl 5 P.atop as <^>
+infixl 5 beside as <>
+infixl 5 atop as <^>

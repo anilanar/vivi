@@ -1,31 +1,34 @@
 module Language.GraphQL.Parser
 where
 
-import Control.Alt ((<$), (<|>))
+import Control.Alt (alt, (<$))
 import Control.Lazy (fix)
 import Data.Either (either)
 import Data.Foldable (foldl)
+import Data.Maybe (Maybe)
 import Data.Monoid (class Monoid, mempty)
 import Language.GraphQL.AST as AST
 import Language.GraphQL.Tokens (genericParser, nameParser, tok, whiteSpace)
 import Language.GraphQL.Types (PP, List, fromFoldable, many, some)
 import Partial.Unsafe (unsafePartial)
 import Prelude (const, ($), (*>), (<$>), (<*), (<*>))
-import Text.Parsing.Parser.Combinators (option, optionMaybe, sepBy1, (<?>))
+import Text.Parsing.Parser.Combinators (option, optionMaybe, sepBy1, try, tryRethrow, (<?>))
 import Text.Parsing.Parser.String (char, string)
 
-parse :: PP AST.Document
-parse = document
+queryDocument :: PP AST.QueryDocument
+queryDocument = whiteSpace
+	*> (AST.QueryDocument <$> some definition)
+	<?> "query document"
 
-document :: PP AST.Document
-document = whiteSpace
-	*> (AST.Document <$> some definition)
-	<?> "document error!"
+schemaDocument :: PP AST.SchemaDocument
+schemaDocument = whiteSpace
+	*> (AST.SchemaDocument <$> some typeDefinition)
+	<?> "schema document"
 
 definition :: PP AST.Definition
 definition = AST.DefinitionOperation <$> operationDefinition
 	<|> AST.DefinitionFragment <$> fragmentDefinition
-	<?> "definition error!"
+	<?> "definition"
 
 operationDefinition :: PP AST.OperationDefinition
 operationDefinition = AST.Query
@@ -35,7 +38,7 @@ operationDefinition = AST.Query
 	<$ tok (string "mutation")
 	<*> node
 	<|> (AST.AnonymousQuery <$> selectionSet)
-	<?> "operationDefinition error!"
+	<?> "operationDefinition"
 
 node :: PP AST.Node
 node = AST.Node
@@ -52,7 +55,7 @@ variableDefinition = AST.VariableDefinition
 	<$> variable
 	<* tok (char ':')
 	<*> type_
-	<*> optionMaybe defaultValue
+	<*> optionMaybe' defaultValue
 
 defaultValue :: PP AST.DefaultValue
 defaultValue = tok (char '=') *> value
@@ -67,11 +70,11 @@ selection :: PP AST.SelectionSet -> PP AST.Selection
 selection selectionSet = AST.SelectionField <$> field selectionSet
 	<|> AST.SelectionInlineFragment <$> inlineFragment selectionSet
 	<|> AST.SelectionFragmentSpread <$> fragmentSpread
-	<?> "selection error!"
+	<?> "selection"
 
 field :: PP AST.SelectionSet -> PP AST.Field
 field selectionSet = AST.Field
-	<$> optionMaybe alias
+	<$> optionMaybe' (try alias)
 	<*> nameParser
 	<*> optempty arguments
 	<*> optempty directives
@@ -81,7 +84,8 @@ alias :: PP AST.Alias
 alias = nameParser <* tok (char ':')
 
 arguments :: PP (List AST.Argument)
-arguments = parens $ some argument
+arguments = tryRethrow (parens $ some argument)
+	<?> "arguments"
 
 argument :: PP AST.Argument
 argument = AST.Argument
@@ -98,7 +102,7 @@ fragmentSpread = AST.FragmentSpread
 inlineFragment :: PP AST.SelectionSet -> PP AST.InlineFragment
 inlineFragment selectionSet = AST.InlineFragment
 	<$ tok (string "...")
-	<*> optionMaybe (tok (string "on") *> typeCondition)
+	<*> optionMaybe' (tok (string "on") *> typeCondition)
 	<*> optempty directives
 	<*> selectionSet
 
@@ -115,16 +119,16 @@ typeCondition :: PP AST.TypeCondition
 typeCondition = namedType
 
 value :: PP AST.Value
-value = fix \rec -> tok $
-	AST.ValueVariable <$> variable <?> "variable"
-	<|> number <?> "number"
-	<|> AST.ValueNull <$ tok (string "null")
-	<|> (AST.ValueBoolean <$> booleanValue <?> "booleanValue")
-	<|> (AST.ValueString <$> stringValue <?> "stringValue")
-	<|> (AST.ValueEnum <$> nameParser <?> "name")
-	<|> (AST.ValueList <$> listValue rec <?> "listValue")
-	<|> (AST.ValueObject <$> objectValue rec <?> "objectValue")
-	<?> "value error!"
+value = fix \rec -> tok $ AST.ValueVariable
+	<$> variable
+	<|> number
+	<|> try (AST.ValueNull <$ tok (string "null"))
+	<|> try (AST.ValueBoolean <$> booleanValue)
+	<|> AST.ValueString <$> stringValue
+	<|> try (AST.ValueEnum <$> nameParser)
+	<|> AST.ValueList <$> listValue rec
+	<|> AST.ValueObject <$> objectValue rec
+	<?> "value"
 	where
 		number = either AST.ValueInt AST.ValueFloat
 			<$> genericParser.naturalOrFloat
@@ -134,7 +138,7 @@ booleanValue = true <$ tok (string "true")
 	<|> false <$ tok (string "false")
 
 stringValue :: PP AST.StringValue
-stringValue = AST.StringValue <$> genericParser.stringLiteral
+stringValue = AST.StringValue <$> tok genericParser.stringLiteral
 
 listValue :: PP AST.Value -> PP AST.ListValue
 listValue value = AST.ListValue <$> brackets (many value)
@@ -162,7 +166,7 @@ directive = AST.Directive
 type_ :: PP AST.Type
 type_ = fix $ \rec -> foldl reduce'
 	<$> prefix rec
-	<*> optionMaybe postfix
+	<*> optionMaybe' postfix
 	<?> "type_ error!"
 	where
 		prefix rec = AST.TypeList <$> listType rec <|> AST.TypeNamed <$> namedType
@@ -259,15 +263,12 @@ inputValueDefinition = AST.InputValueDefinition
 	<$> nameParser
 	<* tok (char ':')
 	<*> type_
-	<*> optionMaybe defaultValue
+	<*> optionMaybe' defaultValue
 
 typeExtensionDefinition :: PP AST.TypeExtensionDefinition
 typeExtensionDefinition = AST.TypeExtensionDefinition
 	<$  tok (string "extend")
 	<*> objectTypeDefinition
-
-optempty :: forall a. Monoid a => PP a -> PP a
-optempty = option mempty
 
 parens :: forall a. PP a -> PP a
 parens = between (char '(') (char ')')
@@ -280,3 +281,17 @@ brackets = between (char '[') (char ']')
 
 between :: forall a b c. PP a -> PP b -> PP c -> PP c
 between open close p = tok open *> p <* tok close
+
+-- Use for backtracking
+optempty :: forall a. Monoid a => PP a -> PP a
+optempty p = option mempty (try p)
+
+-- Use for backtracking
+optionMaybe' :: forall a b. PP a -> PP (Maybe a)
+optionMaybe' p = optionMaybe (try p)
+
+-- Use for backtracking
+altTry :: forall a b. PP a -> PP a -> PP a
+altTry a b = alt (try a) (try b)
+
+infixl 3 altTry as <|>

@@ -1,4 +1,36 @@
-type Character {
-  name: String!
-  appearsIn: [Episode]!
+query MyQuery($limit: [Int], $boo: String!, $foo: String) {
+	items(limit: $limit) {
+		id
+	}
+}
+query MyQuery2($limit: Int, $boo: String!, $foo: String) {
+	items(limit: $limit) {
+		id
+	}
+}
+
+query Foo($email: String, $itemId: Int) {
+  user(email: $email) {
+    id,
+    name,
+    bookmarks {
+      id,
+      item {
+        id,
+        name
+      }
+    }
+  },
+  items {
+    id,
+    name
+  },
+  images(itemId: $itemId) {
+    contextId,
+    overallLiking,
+    partner {
+      name
+    },
+    url
+  }
 }

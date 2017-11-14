@@ -8,62 +8,62 @@ import Data.Foldable (foldl)
 import Data.Monoid (class Monoid, mempty, (<>))
 import Language.Protobuf.AST as AST
 import Language.Protobuf.Tokens (genericParser, identParser, tok)
-import Language.Protobuf.Types (List(..), PP, concatMap, many, (:))
+import Language.Protobuf.Types (List(..), ProtoParserT, concatMap, many, (:))
 import Prelude (Unit, bind, const, pure, (*>), (<*), (<*>))
 import Text.Parsing.Parser.Combinators (optionMaybe, sepBy, sepBy1)
 import Text.Parsing.Parser.Combinators as C
 import Text.Parsing.Parser.String (char, string)
 
-document :: PP AST.Document
+document :: ProtoParserT AST.Document
 document = AST.Document
 	<$ genericParser.whiteSpace
 	<* syntax
 	<*> manyStatements statement
 
-statement :: PP AST.Statement
+statement :: ProtoParserT AST.Statement
 statement = AST.StatementImport <$> import_
 		<|> AST.StatementPackage <$> package
 		<|> AST.StatementOption <$> option
 		<|> AST.StatementDefinition <$> definition
 
-import_ :: PP AST.Import
+import_ :: ProtoParserT AST.Import
 import_ = AST.Import
 	<$ tok (string "import")
 	<*> optionMaybe importSpecifier
 	<*> (AST.StringLiteral <$> genericParser.stringLiteral)
 	<* tok (char ';')
 
-importSpecifier :: PP AST.ImportSpecifier
+importSpecifier :: ProtoParserT AST.ImportSpecifier
 importSpecifier = AST.Weak <$ tok (string "weak")
 	<|> AST.Public <$ tok (string "public")
 
-package :: PP AST.Package
+package :: ProtoParserT AST.Package
 package = AST.Package
 	<$ tok (string "package")
 	<*> fullIdent
 	<* tok (char ';')
 
-definition :: PP AST.Definition
+definition :: ProtoParserT AST.Definition
 definition = AST.DefinitionMessage <$> message
 	<|> AST.DefinitionEnum <$> enum
 	<|> AST.DefinitionService <$> service
 
-message :: PP AST.Message
+message :: ProtoParserT AST.Message
 message = fix \rec -> AST.Message
 	<$ tok (string "message")
 	<*> ident
 	<*> braces (manyStatements (messageBody rec))
 
-messageBody :: PP AST.Message -> PP AST.MessageBody
-messageBody message = AST.MessageBodyEnum <$> enum
-		<|> AST.MessageBodyMessage <$> message
+messageBody :: ProtoParserT AST.Message -> ProtoParserT AST.MessageBody
+messageBody message' = AST.MessageBodyEnum <$> enum
+		<|> AST.MessageBodyMessage <$> message'
 		<|> AST.MessageBodyOption <$> option
 		<|> AST.MessageBodyOneOf <$> oneOf
 		<|> AST.MessageBodyMapField <$> mapField
 		<|> AST.MessageBodyReserved <$> reserved
 		<|> AST.MessageBodyNormalField <$> normalField
 
-normalField :: PP AST.NormalField
+normalField :: ProtoParserT AST.NormalField
 normalField = repeated <|> normal
 	where
 		repeated = AST.FieldNormalRepeated
@@ -82,13 +82,13 @@ normalField = repeated <|> normal
 			<*> optempty (brackets (fieldOption `sepBy` tok (char ',')))
 			<* tok (char ';')
 
-oneOf :: PP AST.OneOf
+oneOf :: ProtoParserT AST.OneOf
 oneOf = AST.OneOf
 	<$ tok (string "oneof")
 	<*> ident
 	<*> braces (manyStatements oneOfField)
 
-oneOfField :: PP AST.OneOfField
+oneOfField :: ProtoParserT AST.OneOfField
 oneOfField = AST.OneOfField
 	<$> type_
 	<*> ident
@@ -97,17 +97,17 @@ oneOfField = AST.OneOfField
 	<*> (brackets (many fieldOption))
 	<* tok (char ';')
 
-enum :: PP AST.Enum
+enum :: ProtoParserT AST.Enum
 enum = AST.Enum
 	<$ tok (string "enum")
 	<*> ident
 	<*> braces (manyStatements enumBody)
 
-enumBody :: PP AST.EnumBody
+enumBody :: ProtoParserT AST.EnumBody
 enumBody = AST.EnumBodyOption <$> option
 	<|> AST.EnumBodyField <$> enumField
 
-enumField :: PP AST.EnumField
+enumField :: ProtoParserT AST.EnumField
 enumField = AST.EnumField
 	<$> ident
 	<* tok (char '=')
@@ -115,23 +115,23 @@ enumField = AST.EnumField
 	<*> optempty (brackets (enumValueOption `sepBy` tok (char ',')))
 	<* tok (char ';')
 
-enumValueOption :: PP AST.EnumValueOption
+enumValueOption :: ProtoParserT AST.EnumValueOption
 enumValueOption = AST.EnumValueOption
 	<$> optionName
 	<* tok (char '=')
 	<*> constant
 
-service :: PP AST.Service
+service :: ProtoParserT AST.Service
 service = AST.Service
 	<$ tok (string "service")
 	<*> ident
 	<*> braces (manyStatements serviceBody)
 
-serviceBody :: PP AST.ServiceBody
+serviceBody :: ProtoParserT AST.ServiceBody
 serviceBody = AST.ServiceBodyOption <$> option
 	<|> AST.ServiceBodyRpc <$> rpc
 
-rpc :: PP AST.Rpc
+rpc :: ProtoParserT AST.Rpc
 rpc = AST.Rpc
 	<$ tok (string "rpc")
 	<*> ident
@@ -140,13 +140,13 @@ rpc = AST.Rpc
 	<*> parens rpcType
 	<*> optionsOrEnd
 	where
-		rpcType :: PP AST.RpcType
+		rpcType :: ProtoParserT AST.RpcType
 		rpcType = AST.RpcTypeStream <$ (tok (string "stream")) <*> messageType
 			<|> AST.RpcType <$> messageType
 		optionsOrEnd = braces (manyStatements option)
 			<|> (const mempty) <$> tok (char ';')
 
-option :: PP AST.Option
+option :: ProtoParserT AST.Option
 option = AST.Option
 	<$ tok (string "option")
 	<*> optionName
@@ -154,13 +154,13 @@ option = AST.Option
 	<*> constant
 	<* tok (char ';')
 
-optionName :: PP AST.OptionName
+optionName :: ProtoParserT AST.OptionName
 optionName = AST.Customized
 	<$> parens fullIdent
 	<*> optempty (tok (char '.') *> ident `sepBy` (tok (char '.')))
 	<|> AST.Predefined <$> ident
 
-mapField :: PP AST.MapField
+mapField :: ProtoParserT AST.MapField
 mapField = AST.MapField
 	<$ tok (string "map<")
 	<*> keyType
@@ -172,7 +172,7 @@ mapField = AST.MapField
 	<*> fieldNumber
 	<*> optempty (brackets (fieldOption `sepBy` tok (char ',')))
 
-reserved :: PP AST.Reserved
+reserved :: ProtoParserT AST.Reserved
 reserved = (reservedRanges <|> reservedNames)
 	<* tok (char ';')
 	where
@@ -185,13 +185,13 @@ reserved = (reservedRanges <|> reservedNames)
 			<$ reservedToken
 			<*> ident `sepBy1` tok (char ',')
 
-fieldOption :: PP AST.FieldOption
+fieldOption :: ProtoParserT AST.FieldOption
 fieldOption = AST.FieldOption
 	<$> ident
 	<* tok (char '=')
 	<*> constant
 
-range :: PP AST.Range
+range :: ProtoParserT AST.Range
 range = AST.Range
 	<$> genericParser.integer
 	<*> optionMaybe to
@@ -200,16 +200,16 @@ range = AST.Range
 		intOrMax = Left <$> genericParser.integer
 			<|> Right <$> (AST.Max <$ tok (string "max"))
 
-fieldNumber :: PP AST.FieldNumber
+fieldNumber :: ProtoParserT AST.FieldNumber
 fieldNumber = AST.FieldNumber <$> genericParser.integer
 
-type_ :: PP AST.Type
+type_ :: ProtoParserT AST.Type
 type_ = AST.Type <$> messageTypeParser
 
-messageType :: PP AST.Ident
+messageType :: ProtoParserT AST.Ident
 messageType = AST.Ident <$> messageTypeParser
 
-messageTypeParser :: PP String
+messageTypeParser :: ProtoParserT String
 messageTypeParser = do
 	dotPrefix <- C.option "" (tok (string "."))
 	body <- foldl (<>) "" <$> rest
@@ -217,7 +217,7 @@ messageTypeParser = do
 	where
 		rest = identParser `sepBy` tok (char '.')
 
-keyType :: PP AST.KeyType
+keyType :: ProtoParserT AST.KeyType
 keyType = AST.Double <$ tok (string "double")
 	<|> AST.Float <$ tok (string "float")
 	<|> AST.Int32 <$ tok (string "int32")
@@ -233,17 +233,17 @@ keyType = AST.Double <$ tok (string "double")
 	<|> AST.Bool <$ tok (string "bool")
 	<|> AST.String <$ tok (string "string")
 
-constant :: PP AST.Constant
+constant :: ProtoParserT AST.Constant
 constant = AST.ConstantIdent <$> fullIdent
 	<|> AST.ConstantInt <$> genericParser.integer
 	<|> AST.ConstantFloat <$> genericParser.float
 	<|> AST.ConstantString <$> stringLiteral
 	<|> AST.ConstantBool <$> boolLiteral
 
-manyStatements :: forall a. PP a -> PP (List a)
+manyStatements :: forall a. ProtoParserT a -> ProtoParserT (List a)
 manyStatements p = filterEmpty <$> many withEmpty
 	where
-		withEmpty :: PP (Either a Unit)
+		withEmpty :: ProtoParserT (Either a Unit)
 		withEmpty = Right <$> emptyStatement
 			<|> (Left <$> p)
 
@@ -254,17 +254,17 @@ filterEmpty = concatMap toList
 		Right _ -> Nil
 
 
-stringLiteral :: PP AST.StringLiteral
+stringLiteral :: ProtoParserT AST.StringLiteral
 stringLiteral = AST.StringLiteral <$> genericParser.stringLiteral
 
-boolLiteral :: PP Boolean
+boolLiteral :: ProtoParserT Boolean
 boolLiteral = true <$ tok (string "true")
 	<|> false <$ tok (string "false")
 
-emptyStatement :: PP Unit
+emptyStatement :: ProtoParserT Unit
 emptyStatement = void (tok (char ';'))
 
-syntax :: PP Unit
+syntax :: ProtoParserT Unit
 syntax = void syntaxParser
 	where
 		syntaxParser = tok (string "syntax")
@@ -272,23 +272,23 @@ syntax = void syntaxParser
 			<* tok (string "\"proto3\"")
 			<* tok (char ';')
 
-fullIdent :: PP AST.FullIdent
+fullIdent :: ProtoParserT AST.FullIdent
 fullIdent = AST.FullIdent <$> (ident `sepBy1` char '.')
 
-ident :: PP AST.Ident
+ident :: ProtoParserT AST.Ident
 ident = AST.Ident <$> identParser
 
-optempty :: forall a. Monoid a => PP a -> PP a
+optempty :: forall a. Monoid a => ProtoParserT a -> ProtoParserT a
 optempty = C.option mempty
 
-parens :: forall a. PP a -> PP a
+parens :: forall a. ProtoParserT a -> ProtoParserT a
 parens = between (char '(') (char ')')
 
-braces :: forall a. PP a -> PP a
+braces :: forall a. ProtoParserT a -> ProtoParserT a
 braces = between (char '{') (char '}')
 
-brackets :: forall a. PP a -> PP a
+brackets :: forall a. ProtoParserT a -> ProtoParserT a
 brackets = between (char '[') (char ']')
 
-between :: forall a b c. PP a -> PP b -> PP c -> PP c
+between :: forall a b c. ProtoParserT a -> ProtoParserT b -> ProtoParserT c -> ProtoParserT c
 between open close p = tok open *> p <* tok close
