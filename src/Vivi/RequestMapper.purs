@@ -1,11 +1,11 @@
 module Vivi.RequestMapper
 where
 
-import Control.Monad.Except (ExceptT, runExceptT, throwError)
-import Control.Monad.State (StateT, get, put, runStateT)
+import Control.Monad.Except (ExceptT(..), runExceptT, throwError)
+import Control.Monad.State (StateT(..), get, put, runStateT)
 import Data.Array as Arr
 import Data.Either (Either)
-import Data.Identity (Identity)
+import Data.Identity (Identity(..))
 import Data.Maybe (Maybe(Nothing, Just))
 import Data.Newtype (unwrap)
 import Data.Traversable (traverse)
@@ -20,19 +20,31 @@ type Warnings = List String
 type Error = String
 type ConvertT = StateT Warnings (ExceptT String Identity)
 
-instance convertDocument :: Convert G.QueryDocument P.Document where
-	convert (G.QueryDocument defs) = do
-		maybeStatements <- traverse convert defs
-		pure (P.Document $ catMaybes maybeStatements)
+class Convert i o where
+	convert :: i -> ConvertT o
 
-instance convertDefinition :: Convert G.Definition (Maybe P.Statement) where
-	convert (G.DefinitionOperation op) = (Just <<< P.StatementDefinition) <$> (convert op)
-	convert (G.DefinitionFragment _) = pure Nothing
+runConvert :: forall a. ConvertT a -> List String -> Either String (Tuple a (List String))
+runConvert p s = unwrap $ runExceptT $ runStateT p s
+
+warn :: String -> ConvertT Unit
+warn str = do
+	all <- get
+	put (str : all)
+
+instance convertDocument :: Convert G.QueryDocument P.Document where
+	convert (G.QueryDocument defs) = P.Document <$> traverse convert defs
+
+instance convertDefinition :: Convert G.Definition P.Statement where
+	convert (G.DefinitionOperation op) = P.StatementDefinition <$> convert op
+	convert (G.DefinitionFragment _) = throwError "Fragment definitions are not supported"
 
 instance convertOperationDefinition :: Convert G.OperationDefinition P.Definition where
-	convert (G.Query (G.Node (G.Name name) variables _ _)) = P.DefinitionMessage <$> (mkMessage name variables)
-	convert (G.Mutation (G.Node (G.Name name) variables _ _)) = P.DefinitionMessage <$> (mkMessage name variables)
-	convert (G.AnonymousQuery selectionSet) = throwError "Anonymous queries are not supported."
+	convert (G.Query (G.Node (G.Name name) variables _ _)) =
+		P.DefinitionMessage <$> (mkMessage name variables)
+	convert (G.Mutation (G.Node (G.Name name) variables _ _)) =
+		P.DefinitionMessage <$> (mkMessage name variables)
+	convert (G.AnonymousQuery selectionSet) =
+		throwError "Anonymous queries are not supported."
 
 instance convertVariable :: Convert G.Variable P.Ident where
 	convert var = pure $ P.Ident (case var of G.Variable (G.Name name) -> name)
@@ -95,14 +107,3 @@ mkNormalField :: (P.Type
 	-> ConvertT P.MessageBody
 mkNormalField fn namedType id fieldNumber = (convert namedType) >>= \t ->
 	pure $ P.MessageBodyNormalField $ fn t id fieldNumber Nil
-
-class Convert i o where
-	convert :: i -> ConvertT o
-
-runConvert :: forall a. ConvertT a -> List String -> Either String (Tuple a (List String))
-runConvert p s = unwrap $ runExceptT $ runStateT p s
-
-warn :: String -> ConvertT Unit
-warn str = do
-	all <- get
-	put (str : all)

@@ -1,0 +1,48 @@
+type Query {
+  bookmarks(userId: Int!): [bookmarks]
+  images(itemId: Int): [images]
+  item(id: Int): item
+  items(limit: Int = 10): [item]
+  partner(id: Int): partner
+  user(id: ID, email: String): user
+}
+
+type bookmarks {
+  id: Int
+  item: item
+  userId: Int!
+}
+
+type images {
+  id: Int
+  itemId: Int
+  contextId: Int
+  overallLiking: Int
+  topSubject: Int
+  partner: partner
+  height: Int
+  width: Int
+  url: String
+  urlFallback: String
+  thumbUrl: String
+  caption: String
+}
+
+type item {
+  id: Int
+  name: String
+  images: [images]
+}
+
+type partner {
+  id: Int
+  name: String
+  link: String
+}
+
+type user {
+  id: ID
+  name: String
+  email: String
+  bookmarks: [bookmarks]
+}
